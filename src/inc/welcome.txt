@@ -1,0 +1,46 @@
+
+
+
+              _,._      
+  .||,       /_ _\\     
+ \.`',/      |'L'| |    
+ = ,. =      | -,| L    
+ / || \    ,-'\"/,'`.   
+   ||     ,'   `,,. `.  
+   ,|____,' , ,;' \| |    <-- 0bi PWN k3n0b1
+  (3|\    _/|/'   _| |  
+   ||/,-''  | >-'' _,\\ 
+   ||'      ==\ ,-'  ,' 
+   ||       |  V \ ,|   
+   ||       |    |` |   
+   ||       |    |   \  
+   ||       |    \    \ 
+   ||       |     |    \
+   ||       |      \_,-'
+   ||       |___,,--")_\
+   ||         |_|   ccc/
+   ||        ccc/       
+   ||                
+
+   WELL DONE, YOUNG PADAWAN.
+   BEFORE I GIVE YOU YOUR TOKEN
+   OF APPRECIATION, I WANT YOU
+   TO SHOW ME YOUR PERSISTENT 
+   AND WILLING ABILITIES ONE
+   MORE TIME.
+
+   WE NEED YOU TO USE THE FORCE AND MOVE AWAY
+   THIS GIGANTIC BOULDER SHIELDING THE SECRET
+   YOU SEEK.
+
+   HOWEVER, YOUR STAMINA SEEMS TO BE VERY LOW 
+   AFTER YOUR PREVIOUS EFFORTS!
+
+   WE'RE GONNA DEAL WITH THIS BY COOKING UP A
+   SPECIAL POTION. I HAVE THE RECIPE MOSTLY WORKED
+   OUT BUT EIGHT OF THE INGREDIENTS NEED A LITTLE
+   TWEAKING. SPECIFY THE INGREDIENT NUMBERS (IN HEX)
+   AND THEIR ACCOMPANYING TWEAK VALUES TO SEE IF WE
+   CAN WORK THIS OUT.
+
+

